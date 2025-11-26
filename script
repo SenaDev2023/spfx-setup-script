@@ -1,0 +1,393 @@
+# SPFx Project Setup Script
+# Automated SharePoint Framework Development Environment
+# Compatible with Azure DevOps Package Feeds
+
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  SPFx PROJECT SETUP" -ForegroundColor Cyan
+Write-Host "  Azure DevOps Integration" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Get user input
+$projectName = Read-Host "Enter project name (e.g. MyWebPart)"
+$tenantUrl = Read-Host "Enter SharePoint URL (default: https://veritas.sharepoint.com)" 
+if ([string]::IsNullOrWhiteSpace($tenantUrl)) {
+    $tenantUrl = "https://veritas.sharepoint.com"
+}
+
+$siteName = Read-Host "Enter site name for testing (e.g. dev)"
+
+Write-Host ""
+Write-Host "Azure DevOps Package Configuration" -ForegroundColor Yellow
+$azureOrg = Read-Host "Enter Azure DevOps organization name"
+$azureProject = Read-Host "Enter Azure DevOps project ID (GUID)"
+$azureFeed = Read-Host "Enter package feed name"
+$packageScope = Read-Host "Enter package scope (e.g. @company)"
+$azureToken = Read-Host "Enter Personal Access Token (PAT)" -AsSecureString
+$azureTokenPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($azureToken))
+
+Write-Host ""
+Write-Host "Starting setup..." -ForegroundColor Yellow
+Write-Host ""
+
+# Set paths
+$workingDir = "C:\SPFx"
+$projectPath = "$workingDir\$projectName"
+
+# Create working directory
+if (!(Test-Path $workingDir)) {
+    New-Item -ItemType Directory -Path $workingDir -Force | Out-Null
+    Write-Host "Created working directory: $workingDir" -ForegroundColor Green
+}
+
+# Navigate to working directory
+Set-Location $workingDir
+
+# Check if project exists
+if (Test-Path $projectPath) {
+    Write-Host "ERROR: Project folder already exists at $projectPath" -ForegroundColor Red
+    Write-Host "Please delete it or choose a different name." -ForegroundColor Yellow
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit
+}
+
+# Check prerequisites
+Write-Host "Checking prerequisites..." -ForegroundColor Cyan
+
+# Check Node.js
+try {
+    $nodeVersion = node --version
+    Write-Host "✓ Node.js installed: $nodeVersion" -ForegroundColor Green
+} catch {
+    Write-Host "✗ Node.js not found. Please install Node.js v18.x" -ForegroundColor Red
+    Write-Host "  Download from: https://nodejs.org" -ForegroundColor Yellow
+    Read-Host "Press Enter to exit"
+    exit
+}
+
+# Check npm
+try {
+    $npmVersion = npm --version
+    Write-Host "✓ npm installed: $npmVersion" -ForegroundColor Green
+} catch {
+    Write-Host "✗ npm not found" -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit
+}
+
+# Check Yeoman and SPFx generator
+Write-Host ""
+Write-Host "Checking Yeoman and SPFx generator..." -ForegroundColor Cyan
+$yoInstalled = npm list -g yo 2>$null
+$spfxGenInstalled = npm list -g @microsoft/generator-sharepoint 2>$null
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Installing Yeoman and SPFx generator globally..." -ForegroundColor Yellow
+    npm install -g yo @microsoft/generator-sharepoint
+} else {
+    Write-Host "✓ Yeoman and SPFx generator already installed" -ForegroundColor Green
+}
+
+# Create new SPFx project
+Write-Host ""
+Write-Host "Creating SPFx project..." -ForegroundColor Cyan
+Write-Host "The SPFx generator will ask you some questions..." -ForegroundColor Yellow
+Write-Host ""
+
+yo @microsoft/sharepoint --solution-name $projectName
+
+# Check if project was created
+if (!(Test-Path $projectPath)) {
+    Write-Host ""
+    Write-Host "ERROR: Project creation failed or was cancelled" -ForegroundColor Red
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit
+}
+
+# Go into project folder
+Set-Location $projectPath
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "Configuring Azure DevOps Package Feed" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+
+# Create .npmrc file
+$npmrcContent = @"
+$packageScope:registry=https://pkgs.dev.azure.com/$azureOrg/$azureProject/_packaging/$azureFeed/npm/registry/
+//pkgs.dev.azure.com/$azureOrg/$azureProject/_packaging/$azureFeed/npm/registry/:_authToken=$azureTokenPlain
+always-auth=true
+"@
+
+$npmrcContent | Out-File -FilePath ".npmrc" -Encoding UTF8
+Write-Host "✓ Created .npmrc with Azure DevOps configuration" -ForegroundColor Green
+
+# Install dependencies
+Write-Host ""
+Write-Host "Installing project dependencies..." -ForegroundColor Cyan
+Write-Host "(This may take several minutes)" -ForegroundColor Yellow
+npm install
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "✗ Dependency installation failed" -ForegroundColor Red
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit
+}
+
+Write-Host "✓ Dependencies installed successfully" -ForegroundColor Green
+
+# Install custom package from Azure DevOps feed
+Write-Host ""
+$installCustom = Read-Host "Install custom package from Azure feed? (y/N)"
+if ($installCustom -eq 'y' -or $installCustom -eq 'Y') {
+    $packageName = Read-Host "Enter package name (e.g. $packageScope/shared)"
+    Write-Host "Installing $packageName..." -ForegroundColor Cyan
+    npm install $packageName
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "✓ $packageName installed successfully" -ForegroundColor Green
+    } else {
+        Write-Host "✗ Failed to install $packageName" -ForegroundColor Red
+    }
+}
+
+# Install spfx-fast-serve
+Write-Host ""
+Write-Host "Installing spfx-fast-serve for faster development..." -ForegroundColor Cyan
+npm install spfx-fast-serve --save-dev
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✓ spfx-fast-serve installed" -ForegroundColor Green
+    
+    Write-Host ""
+    Write-Host "Configuring fast-serve..." -ForegroundColor Cyan
+    "y" | npx spfx-fast-serve
+    
+    Write-Host "✓ fast-serve configured" -ForegroundColor Green
+} else {
+    Write-Host "⚠ spfx-fast-serve installation failed (optional)" -ForegroundColor Yellow
+}
+
+# Generate URLs
+$certUrl = "https://localhost:4321/temp/manifests.js"
+$workbenchUrl = "$tenantUrl/sites/$siteName/_layouts/15/workbench.aspx?debug=true&noredir=true&debugManifestsFile=https://localhost:4321/temp/manifests.js"
+
+# Create launch script
+$launchScript = @"
+# Development Server Launcher
+Write-Host "Starting SPFx development server..." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "When the server is ready:" -ForegroundColor Yellow
+Write-Host "1. Open: https://localhost:4321/temp/manifests.js" -ForegroundColor White
+Write-Host "   (Accept SSL certificate warning)" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "2. Open: $workbenchUrl" -ForegroundColor White
+Write-Host ""
+
+npm run serve
+"@
+
+$launchScript | Out-File -FilePath "START-DEV-SERVER.ps1" -Encoding UTF8
+
+# Create README
+$readmeContent = @"
+# $projectName
+
+SPFx project configured with Azure DevOps package feed integration.
+
+## Quick Start
+
+### Start Development Server
+``````powershell
+npm run serve
+``````
+
+Or use the launcher:
+``````powershell
+.\START-DEV-SERVER.ps1
+``````
+
+### Access Workbench
+
+1. **Trust SSL Certificate** (first time only):
+   - Open: https://localhost:4321/temp/manifests.js
+   - Accept the security warning
+   - Keep this tab open
+
+2. **Open SharePoint Workbench**:
+   - $workbenchUrl
+
+## Azure DevOps Configuration
+
+This project is configured to use packages from:
+- **Organization**: $azureOrg
+- **Project**: $azureProject
+- **Feed**: $azureFeed
+- **Scope**: $packageScope
+
+Configuration stored in ``.npmrc`` (DO NOT commit this file with PAT token)
+
+## Project Structure
+
+``````
+$projectName/
+├── .npmrc                    # Azure DevOps feed configuration (contains PAT - DO NOT COMMIT)
+├── src/                      # Source code
+├── config/                   # SPFx configuration
+├── package.json              # Dependencies
+├── START-DEV-SERVER.ps1      # Development server launcher
+└── README.md                 # This file
+``````
+
+## Development Workflow
+
+1. Make changes in ``src/``
+2. Server auto-reloads (via fast-serve)
+3. Refresh browser to see changes
+
+## Production Build
+
+``````powershell
+# Clean previous builds
+gulp clean
+
+# Build for production
+gulp build --ship
+gulp bundle --ship
+gulp package-solution --ship
+``````
+
+Output: ``sharepoint/solution/*.sppkg``
+
+## Deployment
+
+1. Upload ``.sppkg`` file to SharePoint App Catalog
+2. Click "Deploy"
+3. Trust the solution when prompted
+4. Add app to target site collection
+
+## Troubleshooting
+
+### npm install fails
+``````powershell
+npm cache clean --force
+npm install
+``````
+
+### Server won't start
+``````powershell
+gulp clean
+npm run serve
+``````
+
+### SSL Certificate Issues
+- Visit https://localhost:4321/temp/manifests.js
+- Click "Advanced" → "Proceed to localhost"
+- Keep tab open during development
+
+### Azure DevOps Authentication
+- Verify PAT token has "Packaging (Read)" permission
+- Check token expiration date in Azure DevOps
+- Regenerate token if expired and update ``.npmrc``
+
+## Security Notes
+
+⚠️ **IMPORTANT**: The ``.npmrc`` file contains your Personal Access Token
+
+**DO NOT:**
+- Commit ``.npmrc`` to source control
+- Share ``.npmrc`` with others
+- Store PAT tokens in plain text outside of ``.npmrc``
+
+**Add to .gitignore:**
+``````
+.npmrc
+``````
+
+## Useful Commands
+
+| Command | Description |
+|---------|-------------|
+| ``npm run serve`` | Start development server (fast-serve) |
+| ``gulp serve`` | Start development server (standard) |
+| ``gulp clean`` | Clean build artifacts |
+| ``gulp build`` | Build for development |
+| ``gulp build --ship`` | Build for production |
+| ``gulp test`` | Run tests |
+| ``npm list`` | Show installed packages |
+
+## Resources
+
+- [SPFx Documentation](https://docs.microsoft.com/sharepoint/dev/spfx/sharepoint-framework-overview)
+- [Azure Artifacts Documentation](https://docs.microsoft.com/azure/devops/artifacts/)
+- [spfx-fast-serve](https://github.com/s-KaiNet/spfx-fast-serve)
+
+---
+
+**Created**: $(Get-Date -Format "yyyy-MM-dd")  
+**SharePoint Tenant**: $tenantUrl  
+**Test Site**: $siteName
+"@
+
+$readmeContent | Out-File -FilePath "README.md" -Encoding UTF8
+
+# Create .gitignore if it doesn't exist
+if (!(Test-Path ".gitignore")) {
+    $gitignoreContent = @"
+# SPFx build artifacts
+dist/
+lib/
+temp/
+node_modules/
+*.log
+
+# SharePoint package
+*.sppkg
+
+# Azure DevOps credentials
+.npmrc
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+"@
+    $gitignoreContent | Out-File -FilePath ".gitignore" -Encoding UTF8
+    Write-Host "✓ Created .gitignore" -ForegroundColor Green
+}
+
+# Success message
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Green
+Write-Host "  SETUP COMPLETE!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "Project Location:" -ForegroundColor White
+Write-Host "  $projectPath" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Next Steps:" -ForegroundColor Yellow
+Write-Host "  1. cd $projectPath" -ForegroundColor White
+Write-Host "  2. npm run serve" -ForegroundColor White
+Write-Host "  3. Open SSL certificate URL in browser" -ForegroundColor White
+Write-Host "  4. Open SharePoint workbench" -ForegroundColor White
+Write-Host ""
+Write-Host "Quick Commands:" -ForegroundColor Yellow
+Write-Host "  .\START-DEV-SERVER.ps1    - Start development server" -ForegroundColor White
+Write-Host "  gulp build --ship          - Build for production" -ForegroundColor White
+Write-Host ""
+Write-Host "Documentation:" -ForegroundColor Yellow
+Write-Host "  See README.md in project folder for full instructions" -ForegroundColor White
+Write-Host ""
+Write-Host "⚠️  Security Reminder:" -ForegroundColor Red
+Write-Host "  .npmrc contains your PAT token - DO NOT commit to source control!" -ForegroundColor Yellow
+Write-Host ""
+
+Read-Host "Press Enter to exit"
